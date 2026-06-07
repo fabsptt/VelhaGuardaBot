@@ -45,7 +45,7 @@ const command = new SlashCommandBuilder()
                 { name: 'Gank', value: 'Gank' },
                 { name: 'Dg Avaloniana', value: 'Dg Avaloniana' },
                 { name: 'Facção', value: 'Facção' },
-                { name: 'HCE', value: 'HCE' },
+                { name: 'HCE / 5 v 5 Crystal', value: 'HCE / 5 v 5 Crystal' },
                 { name: 'ZvZ', value: 'ZvZ' }
             ))
 
