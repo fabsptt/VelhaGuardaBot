@@ -172,11 +172,6 @@ client.on(Events.InteractionCreate, async interaction => {
             new ButtonBuilder()
                 .setCustomId('sair')
                 .setLabel('❌ Sair')
-                .setStyle(ButtonStyle.Secondary),
-
-            new ButtonBuilder()
-                .setCustomId('cancelar')
-                .setLabel('🗑 Cancelar')
                 .setStyle(ButtonStyle.Secondary)
         );
 
@@ -214,12 +209,6 @@ client.on(Events.InteractionCreate, async interaction => {
         if (interaction.customId === 'dps') {
             if (evento.dps.length < evento.maxDps)
                 evento.dps.push(nome);
-        }
-
-        if (interaction.customId === 'cancelar') {
-            await interaction.message.delete();
-            eventos.delete(interaction.message.id);
-            return;
         }
 
         await interaction.update({
