@@ -42,10 +42,20 @@ const command = new SlashCommandBuilder()
                 { name: 'AvaRoads', value: 'AvaRoads' },
                 { name: 'DgGrupo', value: 'DgGrupo' },
                 { name: 'Estática', value: 'Estática' },
+                { name: 'Mundo Aberto (Fama/Pve)', value: 'Mundo Aberto (Fama/Pve)' },
+                { name: 'Mundo Aberto (PVP/Roaming)', value: 'Mundo Aberto (PVP/Roaming)' },
+                { name: 'Cofres/Aranhas (Objetivos)', value: 'Cofres/Aranhas (Objetivos)' },
+                { name: 'Hellgate 2v2', value: 'Hellgate 2v2' },
+                { name: 'Hellgate 5v5', value: 'Hellgate 5v5' },
+                { name: 'Arena de Cristal', value: 'Arena de Cristal' },
+                { name: 'Liga de Cristal 5v5', value: 'Liga de Cristal 5v5' },
+                { name: 'Liga de Cristal 20v20', value: 'Liga de Cristal 20v20' },
+                { name: 'Depths', value: 'Depths' },
                 { name: 'Gank', value: 'Gank' },
+                { name: 'Transporte de Facção', value: 'Transporte de Faccão' },
                 { name: 'Dg Avaloniana', value: 'Dg Avaloniana' },
                 { name: 'Facção', value: 'Facção' },
-                { name: 'HCE / 5 v 5 Crystal', value: 'HCE / 5 v 5 Crystal' },
+                { name: 'HCE', value: 'HCE' },
                 { name: 'ZvZ', value: 'ZvZ' }
             ))
 
