@@ -201,7 +201,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (!evento) return;
 
-        const nome = interaction.member.displayName;
+        const nome = interaction.member.displayName || interaction.user.username;
 
         evento.tanks = evento.tanks.filter(x => x !== nome);
         evento.healers = evento.healers.filter(x => x !== nome);
