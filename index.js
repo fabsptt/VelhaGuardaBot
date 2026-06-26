@@ -16,7 +16,8 @@ const {
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMembers
     ]
 });
 
@@ -200,7 +201,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (!evento) return;
 
-        const nome = interaction.user.username;
+        const nome = interaction.member.displayName;
 
         evento.tanks = evento.tanks.filter(x => x !== nome);
         evento.healers = evento.healers.filter(x => x !== nome);
