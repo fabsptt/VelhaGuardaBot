@@ -53,6 +53,7 @@ const command = new SlashCommandBuilder()
                 { name: 'Liga de Cristal 20v20', value: 'Liga de Cristal 20v20' },
                 { name: 'Depths', value: 'Depths' },
                 { name: 'Gank', value: 'Gank' },
+                { name: 'Caçadas', value: 'Caçadas' },
                 { name: 'Transporte de Facção', value: 'Transporte de Faccão' },
                 { name: 'Dg Avaloniana', value: 'Dg Avaloniana' },
                 { name: 'Facção', value: 'Facção' },
