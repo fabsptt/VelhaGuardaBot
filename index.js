@@ -187,7 +187,8 @@ function criarBotoes(evento) {
     const botoesRoles = evento.roles.map(role =>
         new ButtonBuilder()
             .setCustomId(role.id)
-            .setLabel(`${role.emoji} ${role.label}`)
+            .setLabel(role.label)
+            .setEmoji(role.emoji)
             .setStyle(role.style)
     );
 
