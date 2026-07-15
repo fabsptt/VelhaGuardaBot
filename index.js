@@ -40,13 +40,13 @@ const ROLE_SETS = {
     'Dg Avaloniana': {
         globalCap: 20,
         roles: [
-            { id: 'caller',        label: 'Caller',         emoji: ':Truebolt:', max: 1,  style: ButtonStyle.Primary },
-            { id: 'offtank',       label: 'Offtank',        emoji: ':Incubus:',  max: 1,  style: ButtonStyle.Primary },
-            { id: 'mainhealer',    label: 'MainHealer',     emoji: ':Hallowfall:1512491167952932936', max: 1,  style: ButtonStyle.Success },
-            { id: 'shadowcaller',  label: 'ShadowCaller',   emoji: ':Shadowcaller:', max: 1,  style: ButtonStyle.Primary },
-            { id: 'greatarcane',   label: 'GreatArcane',    emoji: ':Great_Arcane:', max: 1,  style: ButtonStyle.Primary },
-            { id: 'crystalreaper', label: 'Crystal Reaper', emoji: ':Crystal_Reaper:', max: 10, style: ButtonStyle.Danger },
-            { id: 'outrosdps',     label: 'Outros Dps',     emoji: ':Blazing:',  max: 10, style: ButtonStyle.Danger },
+            { id: 'caller',        label: 'Caller',         emoji: '<:Truebolt:1512491138039287958>', max: 1,  style: ButtonStyle.Primary },
+            { id: 'offtank',       label: 'Offtank',        emoji: '<:Incubus:1512491042891497642>',  max: 1,  style: ButtonStyle.Primary },
+            { id: 'mainhealer',    label: 'MainHealer',     emoji: '<:Hallowfall:1512491167952932936>', max: 1,  style: ButtonStyle.Success },
+            { id: 'shadowcaller',  label: 'ShadowCaller',   emoji: '<:Shadowcaller:1512491101968404631>', max: 1,  style: ButtonStyle.Primary },
+            { id: 'greatarcane',   label: 'GreatArcane',    emoji: '<:Great_Arcane:1513526429667688458>', max: 1,  style: ButtonStyle.Primary },
+            { id: 'crystalreaper', label: 'Crystal Reaper', emoji: '<:Crystal_Reaper:1513526314429190184>', max: 10, style: ButtonStyle.Danger },
+            { id: 'outrosdps',     label: 'Outros Dps',     emoji: '<:Blazing:1512491011220443327>',  max: 10, style: ButtonStyle.Danger },
             { id: 'dpshealer',     label: 'Dps Healer',     emoji: '<:Hallowfall:1512491167952932936>', max: 1,  style: ButtonStyle.Success }
         ]
     }
