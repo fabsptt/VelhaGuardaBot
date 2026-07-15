@@ -42,12 +42,12 @@ const ROLE_SETS = {
         roles: [
             { id: 'caller',        label: 'Caller',         emoji: ':Truebolt:', max: 1,  style: ButtonStyle.Primary },
             { id: 'offtank',       label: 'Offtank',        emoji: ':Incubus:',  max: 1,  style: ButtonStyle.Primary },
-            { id: 'mainhealer',    label: 'MainHealer',     emoji: ':Hallowfall:', max: 1,  style: ButtonStyle.Success },
+            { id: 'mainhealer',    label: 'MainHealer',     emoji: ':Hallowfall:1512491167952932936', max: 1,  style: ButtonStyle.Success },
             { id: 'shadowcaller',  label: 'ShadowCaller',   emoji: ':Shadowcaller:', max: 1,  style: ButtonStyle.Primary },
             { id: 'greatarcane',   label: 'GreatArcane',    emoji: ':Great_Arcane:', max: 1,  style: ButtonStyle.Primary },
             { id: 'crystalreaper', label: 'Crystal Reaper', emoji: ':Crystal_Reaper:', max: 10, style: ButtonStyle.Danger },
             { id: 'outrosdps',     label: 'Outros Dps',     emoji: ':Blazing:',  max: 10, style: ButtonStyle.Danger },
-            { id: 'dpshealer',     label: 'Dps Healer',     emoji: ':Hallowfall:', max: 1,  style: ButtonStyle.Success }
+            { id: 'dpshealer',     label: 'Dps Healer',     emoji: '<:Hallowfall:1512491167952932936>', max: 1,  style: ButtonStyle.Success }
         ]
     }
 };
