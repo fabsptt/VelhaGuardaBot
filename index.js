@@ -39,6 +39,9 @@ const tiers = [
 const ROLE_SETS = {
     'Dg Avaloniana': {
         globalCap: 20,
+        // Estas são as 5 classes fixas que têm de estar todas preenchidas
+        // para a dungeon poder avançar.
+        rolesObrigatorios: ['caller', 'offtank', 'mainhealer', 'shadowcaller', 'greatarcane'],
         roles: [
             { id: 'caller',        label: 'Caller',         emoji: '<:Truebolt:1512491138039287958>', max: 1,  style: ButtonStyle.Primary },
             { id: 'offtank',       label: 'Offtank',        emoji: '<:Incubus:1512491042891497642>',  max: 1,  style: ButtonStyle.Primary },
@@ -161,6 +164,14 @@ function totalParticipantes(evento) {
     return evento.roles.reduce((total, role) => total + role.members.length, 0);
 }
 
+function classesObrigatoriasCompletas(evento) {
+    if (!evento.rolesObrigatorios) return true;
+    return evento.rolesObrigatorios.every(id => {
+        const role = evento.roles.find(r => r.id === id);
+        return role && role.members.length >= role.max;
+    });
+}
+
 function criarEmbed(evento) {
     const secoes = evento.roles
         .map(role => `${role.emoji} ${role.label} (${role.members.length}/${role.max})\n${role.members.join('\n') || 'Nenhum'}`)
@@ -168,6 +179,12 @@ function criarEmbed(evento) {
 
     const rodape = evento.globalCap
         ? `\n\n👥 Total: ${totalParticipantes(evento)}/${evento.globalCap}`
+        : '';
+
+    const avisoClassesFixas = evento.rolesObrigatorios
+        ? (classesObrigatoriasCompletas(evento)
+            ? '\n\n✅ Classes fixas completas — a dungeon segue!'
+            : '\n\n⚠️ Sem as 5 classes fixas completas, a dungeon não segue.')
         : '';
 
     return new EmbedBuilder()
@@ -178,16 +195,15 @@ function criarEmbed(evento) {
 ⏰ Hora: ${evento.hora}
 🎯 Tier obrigatório: ${evento.tier}
 
-${secoes}${rodape}`
+${secoes}${rodape}${avisoClassesFixas}`
         )
-        .setColor('Green');
+        .setColor(evento.rolesObrigatorios && !classesObrigatoriasCompletas(evento) ? 'Yellow' : 'Green');
 }
 
 function criarBotoes(evento) {
     const botoesRoles = evento.roles.map(role =>
         new ButtonBuilder()
             .setCustomId(role.id)
-            .setLabel(role.label)
             .setEmoji(role.emoji)
             .setStyle(role.style)
     );
@@ -216,11 +232,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
         let roles;
         let globalCap;
+        let rolesObrigatorios;
 
         if (roleSet) {
             // Tipo com vagas fixas (ex: Dg Avaloniana)
             roles = roleSet.roles.map(r => ({ ...r, members: [] }));
             globalCap = roleSet.globalCap;
+            rolesObrigatorios = roleSet.rolesObrigatorios;
         } else {
             // Tipo genérico: tanks/healers/dps são obrigatórios aqui
             const tanks = interaction.options.getInteger('tanks');
@@ -237,6 +255,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
             roles = criarRolesPorDefeito(interaction).map(r => ({ ...r, members: [] }));
             globalCap = undefined;
+            rolesObrigatorios = undefined;
         }
 
         const evento = {
@@ -246,7 +265,8 @@ client.on(Events.InteractionCreate, async interaction => {
             hora: interaction.options.getString('hora'),
             tier: interaction.options.getString('tier'),
             roles,
-            globalCap
+            globalCap,
+            rolesObrigatorios
         };
 
         const msg = await interaction.reply({
@@ -304,4 +324,3 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 client.login(process.env.TOKEN);
-
