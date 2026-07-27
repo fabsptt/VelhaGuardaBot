@@ -1,4 +1,6 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
 const {
     Client,
@@ -23,6 +25,9 @@ const client = new Client({
 
 const eventos = new Map();
 
+// ID do canal #｢📊│ranking-analises (vem do .env, ver instruções no README).
+const RANKING_CHANNEL_ID = process.env.RANKING_CHANNEL_ID;
+
 const tiers = [
     "4", "4.1", "4.2", "4.3", "4.4",
     "5", "5.1", "5.2", "5.3", "5.4",
@@ -30,6 +35,71 @@ const tiers = [
     "7", "7.1", "7.2", "7.3", "7.4",
     "8.0", "8.1", "8.2", "8.3", "8.4"
 ];
+
+// -----------------------------------------------------------------------
+// ESTATÍSTICAS (persistência em ficheiro)
+// -----------------------------------------------------------------------
+// Guarda: (1) quem criou cada evento e em que semana, e (2) cada
+// participação confirmada (1ª vez que alguém entra numa vaga de um evento).
+// Isto permite calcular "quem puxou mais conteúdo" e o "top participantes"
+// por semana ou no geral, mesmo depois de reiniciar o bot.
+const STATS_FILE = path.join(__dirname, 'stats.json');
+
+function loadStats() {
+    try {
+        const raw = fs.readFileSync(STATS_FILE, 'utf8');
+        const data = JSON.parse(raw);
+        return {
+            eventos: Array.isArray(data.eventos) ? data.eventos : [],
+            participacoes: Array.isArray(data.participacoes) ? data.participacoes : []
+        };
+    } catch (err) {
+        return { eventos: [], participacoes: [] };
+    }
+}
+
+function saveStats() {
+    try {
+        fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2));
+    } catch (err) {
+        console.error('Erro ao gravar stats.json:', err);
+    }
+}
+
+// Devolve a semana ISO (ex: "2026-W30") de uma data, para agrupar por semana.
+function getSemanaISO(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+const stats = loadStats();
+
+function registarEventoCriado(criadorId, criadorNome, tipo) {
+    const agora = new Date();
+    stats.eventos.push({
+        criadorId,
+        criadorNome,
+        tipo,
+        semana: getSemanaISO(agora),
+        timestamp: agora.toISOString()
+    });
+    saveStats();
+}
+
+function registarParticipacao(userId, nome) {
+    const agora = new Date();
+    stats.participacoes.push({
+        userId,
+        nome,
+        semana: getSemanaISO(agora),
+        timestamp: agora.toISOString()
+    });
+    saveStats();
+}
 
 // -----------------------------------------------------------------------
 // DEFINIÇÃO DAS FUNÇÕES (ROLES) POR TIPO DE CONTEÚDO
@@ -141,16 +211,83 @@ const command = new SlashCommandBuilder()
             .setDescription('Número de DPS (não aplicável a Dg Avaloniana)')
             .setRequired(false));
 
+// Novo comando: ranking semanal de criadores de conteúdo e top participantes.
+const rankingCommand = new SlashCommandBuilder()
+    .setName('ranking')
+    .setDescription('Ver quem mais criou conteúdo e o top 10 de participantes')
+    .addStringOption(option =>
+        option.setName('periodo')
+            .setDescription('Período do ranking')
+            .setRequired(false)
+            .addChoices(
+                { name: 'Semana atual', value: 'semana' },
+                { name: 'Geral (todas as semanas)', value: 'geral' }
+            ));
+
+// Novo comando: /aviso — manda uma mensagem por DM a todos os membros
+// de um cargo (e, para quem tiver as DMs fechadas, publica no canal
+// indicado a mencionar essas pessoas). Só pode ser usado por quem tiver
+// um dos cargos listados em AVISO_ALLOWED_ROLE_IDS (.env).
+const avisoCommand = new SlashCommandBuilder()
+    .setName('aviso')
+    .setDescription('Enviar um aviso por DM aos membros de um cargo')
+    .addRoleOption(option =>
+        option.setName('cargo')
+            .setDescription('Cargo a avisar')
+            .setRequired(true))
+    .addStringOption(option =>
+        option.setName('mensagem')
+            .setDescription('Mensagem a enviar')
+            .setRequired(true))
+    .addChannelOption(option =>
+        option.setName('canal')
+            .setDescription('Canal para avisar quem não recebeu DM (por defeito: este canal)')
+            .setRequired(false));
+
+// Novo comando: /loot — divide um valor de loot igualmente pelo número
+// de participantes indicado, com opção de descontar taxa da guild (%).
+const lootCommand = new SlashCommandBuilder()
+    .setName('loot')
+    .setDescription('Dividir loot por um número de participantes')
+    .addIntegerOption(option =>
+        option.setName('valor')
+            .setDescription('Valor total do loot (prata)')
+            .setRequired(true)
+            .setMinValue(1))
+    .addIntegerOption(option =>
+        option.setName('participantes')
+            .setDescription('Número de participantes no evento')
+            .setRequired(true)
+            .setMinValue(1))
+    .addNumberOption(option =>
+        option.setName('taxa')
+            .setDescription('Taxa da guild a descontar antes de dividir, em % (opcional)')
+            .setRequired(false)
+            .setMinValue(0)
+            .setMaxValue(100));
+
+// IDs dos cargos que podem usar /aviso (ex: @moderador, @admin).
+// Define no .env: AVISO_ALLOWED_ROLE_IDS=123456789012345678,987654321098765432
+const AVISO_ALLOWED_ROLE_IDS = (process.env.AVISO_ALLOWED_ROLE_IDS || '')
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean);
+
+function podeUsarAviso(member) {
+    if (AVISO_ALLOWED_ROLE_IDS.length === 0) return false;
+    return member.roles.cache.some(role => AVISO_ALLOWED_ROLE_IDS.includes(role.id));
+}
+
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
     try {
         await rest.put(
             Routes.applicationCommands(process.env.CLIENT_ID),
-            { body: [command.toJSON()] }
+            { body: [command.toJSON(), rankingCommand.toJSON(), avisoCommand.toJSON(), lootCommand.toJSON()] }
         );
 
-        console.log('Slash command registado.');
+        console.log('Slash commands registados.');
     } catch (error) {
         console.error(error);
     }
@@ -158,7 +295,73 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once(Events.ClientReady, () => {
     console.log(`Bot online: ${client.user.tag}`);
+    agendarRankingSemanal();
 });
+
+// Guarda a data (YYYY-MM-DD, em Lisboa) do último envio automático, para
+// garantir que o ranking só é enviado uma vez em cada sábado às 14:00,
+// mesmo que o setInterval corra várias vezes dentro desse minuto.
+let ultimoEnvioRanking = null;
+
+// Devolve as partes da hora atual (dia da semana, hora, minuto, data) já
+// convertidas para o fuso horário de Lisboa, sem depender de bibliotecas
+// externas — usa apenas o Intl embutido no Node.
+function obterHoraLisboa() {
+    const agora = new Date();
+
+    const partes = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Lisbon',
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(agora);
+
+    const obter = tipo => partes.find(p => p.type === tipo)?.value;
+
+    return {
+        diaSemana: obter('weekday'), // 'Sat', 'Sun', etc.
+        hora: Number(obter('hour')),
+        minuto: Number(obter('minute')),
+        dataISO: `${obter('year')}-${obter('month')}-${obter('day')}`
+    };
+}
+
+// Verifica a cada minuto se já é sábado às 14:00 em Lisboa e, nesse caso,
+// envia o ranking da semana para o canal configurado.
+function agendarRankingSemanal() {
+    if (!RANKING_CHANNEL_ID) {
+        console.warn('RANKING_CHANNEL_ID não definido no .env — o ranking semanal automático está desativado.');
+        return;
+    }
+
+    setInterval(async () => {
+        const { diaSemana, hora, minuto, dataISO } = obterHoraLisboa();
+
+        const eSabadoAs14h = diaSemana === 'Sat' && hora === 14 && minuto === 0;
+
+        if (!eSabadoAs14h || ultimoEnvioRanking === dataISO) return;
+
+        ultimoEnvioRanking = dataISO;
+
+        try {
+            const canal = await client.channels.fetch(RANKING_CHANNEL_ID);
+            if (!canal) {
+                console.error('Não foi possível encontrar o canal com RANKING_CHANNEL_ID.');
+                return;
+            }
+            await canal.send({ embeds: [criarEmbedRanking('semana')] });
+            console.log('Ranking semanal enviado automaticamente.');
+        } catch (err) {
+            console.error('Erro ao enviar o ranking semanal automático:', err);
+        }
+    }, 30 * 1000); // verifica a cada 30 segundos
+
+    console.log('Agendamento do ranking semanal ativo (sábados às 14:00, Europe/Lisbon).');
+}
 
 function totalParticipantes(evento) {
     return evento.roles.reduce((total, role) => total + role.members.length, 0);
@@ -194,6 +397,7 @@ function criarEmbed(evento) {
 📅 Data: ${evento.data}
 ⏰ Hora: ${evento.hora}
 🎯 Tier obrigatório: ${evento.tier}
+🙋 Criado por: ${evento.criadorNome}
 
 ${secoes}${rodape}${avisoClassesFixas}`
         )
@@ -223,9 +427,170 @@ function criarBotoes(evento) {
     return linhas;
 }
 
+// Formata números de prata com separador de milhares (ex: 1234567 -> "1.234.567").
+function formatarPrata(valor) {
+    return Math.round(valor).toLocaleString('pt-PT');
+}
+
+// Constrói o embed com a divisão do loot.
+function criarEmbedLoot({ valor, participantes, taxa, autorNome }) {
+    const temTaxa = taxa > 0;
+    const valorLiquido = temTaxa ? valor * (1 - taxa / 100) : valor;
+    const porPessoa = valorLiquido / participantes;
+
+    const descricaoTaxa = temTaxa
+        ? `💸 Taxa da guild: ${taxa}% (−${formatarPrata(valor - valorLiquido)})\n📦 Loot líquido: ${formatarPrata(valorLiquido)}\n`
+        : '';
+
+    return new EmbedBuilder()
+        .setTitle('💰 Divisão de Loot')
+        .setDescription(
+`📦 Loot total: ${formatarPrata(valor)}
+${descricaoTaxa}👥 Participantes: ${participantes}
+
+✅ Cada um recebe: **${formatarPrata(porPessoa)}**`
+        )
+        .setFooter({ text: `Calculado por ${autorNome}` })
+        .setColor('Gold');
+}
+
+// Constrói o embed de ranking (criadores + participantes) para um período.
+function criarEmbedRanking(periodo) {
+    const semanaAtual = getSemanaISO(new Date());
+
+    let eventosFiltrados = stats.eventos;
+    let participacoesFiltradas = stats.participacoes;
+    let tituloPeriodo = 'Geral (todas as semanas)';
+
+    if (periodo === 'semana') {
+        eventosFiltrados = stats.eventos.filter(e => e.semana === semanaAtual);
+        participacoesFiltradas = stats.participacoes.filter(p => p.semana === semanaAtual);
+        tituloPeriodo = `Semana atual (${semanaAtual})`;
+    }
+
+    const contagemCriadores = {};
+    eventosFiltrados.forEach(e => {
+        contagemCriadores[e.criadorNome] = (contagemCriadores[e.criadorNome] || 0) + 1;
+    });
+    const rankingCriadores = Object.entries(contagemCriadores)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    const contagemParticipantes = {};
+    participacoesFiltradas.forEach(p => {
+        contagemParticipantes[p.nome] = (contagemParticipantes[p.nome] || 0) + 1;
+    });
+    const rankingParticipantes = Object.entries(contagemParticipantes)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    const medalhas = ['🥇', '🥈', '🥉'];
+    const formatarLista = (lista, unidade) => {
+        if (lista.length === 0) return 'Sem dados ainda.';
+        return lista
+            .map(([nome, count], i) => {
+                const posicao = medalhas[i] || `**${i + 1}.**`;
+                const rotulo = count === 1 ? unidade.singular : unidade.plural;
+                return `${posicao} ${nome} — ${count} ${rotulo}`;
+            })
+            .join('\n');
+    };
+
+    return new EmbedBuilder()
+        .setTitle(`📊 Ranking — ${tituloPeriodo}`)
+        .addFields(
+            {
+                name: '🎯 Quem mais puxou conteúdo (criadores)',
+                value: formatarLista(rankingCriadores, { singular: 'evento criado', plural: 'eventos criados' })
+            },
+            {
+                name: '🏆 Top 10 Participantes',
+                value: formatarLista(rankingParticipantes, { singular: 'participação', plural: 'participações' })
+            }
+        )
+        .setColor('Blue');
+}
+
 client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.isChatInputCommand()) {
+
+        if (interaction.commandName === 'ranking') {
+            const periodo = interaction.options.getString('periodo') || 'semana';
+            await interaction.reply({ embeds: [criarEmbedRanking(periodo)] });
+            return;
+        }
+
+        if (interaction.commandName === 'loot') {
+            const valor = interaction.options.getInteger('valor');
+            const participantes = interaction.options.getInteger('participantes');
+            const taxa = interaction.options.getNumber('taxa') || 0;
+            const autorNome = interaction.member.displayName || interaction.user.username;
+
+            await interaction.reply({
+                embeds: [criarEmbedLoot({ valor, participantes, taxa, autorNome })]
+            });
+            return;
+        }
+
+        if (interaction.commandName === 'aviso') {
+            if (!podeUsarAviso(interaction.member)) {
+                await interaction.reply({
+                    content: 'Não tens permissão para usar este comando.',
+                    ephemeral: true
+                });
+                return;
+            }
+
+            const cargo = interaction.options.getRole('cargo');
+            const mensagem = interaction.options.getString('mensagem');
+            const canalFallback = interaction.options.getChannel('canal') || interaction.channel;
+
+            await interaction.deferReply({ ephemeral: true });
+
+            // Garante que a cache de membros do cargo está completa antes
+            // de ler cargo.members (precisa do intent GuildMembers).
+            await interaction.guild.members.fetch();
+
+            const membros = cargo.members.filter(m => !m.user.bot);
+
+            if (membros.size === 0) {
+                await interaction.editReply('Esse cargo não tem membros (além de bots).');
+                return;
+            }
+
+            let enviados = 0;
+            const falharam = [];
+
+            for (const membro of membros.values()) {
+                try {
+                    await membro.send(`📢 **Aviso de ${interaction.guild.name}:**\n${mensagem}`);
+                    enviados++;
+                } catch (err) {
+                    falharam.push(membro);
+                }
+                // Pequena pausa entre DMs para não sobrecarregar a API.
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            if (falharam.length > 0) {
+                const mencoes = falharam.map(m => `<@${m.id}>`).join(' ');
+                await canalFallback.send(
+                    `📢 **Aviso para ${cargo}:**\n${mensagem}\n\n(Não foi possível enviar DM a: ${mencoes})`
+                );
+            }
+
+            await interaction.editReply(
+                `Aviso enviado a ${cargo.name}.\n` +
+                `✅ DM entregue a ${enviados} pessoa(s).` +
+                (falharam.length > 0
+                    ? `\n⚠️ ${falharam.length} sem DM aberta — avisadas em ${canalFallback}.`
+                    : '')
+            );
+            return;
+        }
+
+        if (interaction.commandName !== 'conteudo') return;
 
         const tipo = interaction.options.getString('tipo');
         const roleSet = ROLE_SETS[tipo];
@@ -258,6 +623,8 @@ client.on(Events.InteractionCreate, async interaction => {
             rolesObrigatorios = undefined;
         }
 
+        const criadorNome = interaction.member.displayName || interaction.user.username;
+
         const evento = {
             tipo,
             saida: interaction.options.getString('saida'),
@@ -266,7 +633,13 @@ client.on(Events.InteractionCreate, async interaction => {
             tier: interaction.options.getString('tier'),
             roles,
             globalCap,
-            rolesObrigatorios
+            rolesObrigatorios,
+            criadorId: interaction.user.id,
+            criadorNome,
+            // Guarda os IDs de quem já foi contabilizado para o ranking
+            // neste evento — mesmo que a pessoa saia e volte a entrar,
+            // não volta a contar (evita inflacionar o próprio número).
+            contabilizados: new Set()
         };
 
         const msg = await interaction.reply({
@@ -276,6 +649,9 @@ client.on(Events.InteractionCreate, async interaction => {
         });
 
         eventos.set(msg.id, evento);
+
+        // Regista para efeitos de ranking semanal de criadores.
+        registarEventoCriado(interaction.user.id, criadorNome, tipo);
     }
 
     if (interaction.isButton()) {
@@ -297,10 +673,21 @@ client.on(Events.InteractionCreate, async interaction => {
                 const abaixoDoLimiteGlobal = !evento.globalCap || totalAtual < evento.globalCap;
 
                 if (role.members.length < role.max && abaixoDoLimiteGlobal) {
+                    // "Novo participante" para efeitos de ranking = ainda não
+                    // foi contabilizado NESTE evento, mesmo que já tenha saído
+                    // e voltado a entrar (evita inflacionar o próprio número
+                    // a sair e a entrar repetidamente).
+                    const eraNovoParticipante = !evento.contabilizados.has(interaction.user.id);
+
                     if (jaInscritoEm) {
                         jaInscritoEm.members = jaInscritoEm.members.filter(x => x !== nome);
                     }
                     role.members.push(nome);
+
+                    if (eraNovoParticipante) {
+                        evento.contabilizados.add(interaction.user.id);
+                        registarParticipacao(interaction.user.id, nome);
+                    }
                 } else {
                     // Vaga cheia ou limite global atingido: avisa o utilizador
                     // sem alterar o embed (a interação só pode ter uma resposta).
