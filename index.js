@@ -23,7 +23,30 @@ const client = new Client({
     ]
 });
 
-const eventos = new Map();
+// IMPORTANTE: sem estes handlers, um erro no WebSocket (ligação ao Discord)
+// faz o processo rebentar de imediato (exit code 1) sem mostrar a causa real,
+// porque o Node trata um evento 'error' sem listener como exceção fatal.
+client.on('error', (err) => {
+    console.error('Erro no client do Discord:', err);
+});
+
+client.on('shardError', (err, shardId) => {
+    console.error(`Erro no shard ${shardId}:`, err);
+});
+
+client.on('shardDisconnect', (event, shardId) => {
+    console.warn(`Shard ${shardId} desligado. Código: ${event.code}`);
+});
+
+client.on('shardReconnecting', (shardId) => {
+    console.log(`Shard ${shardId} a tentar reconectar...`);
+});
+
+process.on('unhandledRejection', (err) => {
+    console.error('Unhandled rejection:', err);
+});
+
+let eventos = new Map();
 
 // ID do canal #｢📊│ranking-analises (vem do .env, ver instruções no README).
 const RANKING_CHANNEL_ID = process.env.RANKING_CHANNEL_ID;
@@ -77,6 +100,50 @@ function getSemanaISO(date) {
 }
 
 const stats = loadStats();
+
+// -----------------------------------------------------------------------
+// EVENTOS ATIVOS (persistência em ficheiro)
+// -----------------------------------------------------------------------
+// Sem isto, qualquer reinício do bot (deploy, crash, restart do hosting)
+// apagava da memória todos os eventos com inscrições em curso: o embed
+// ficava visível no Discord, mas os botões deixavam de fazer efeito
+// (o bot já não sabia quem estava inscrito em quê) e as vagas
+// preenchidas perdiam-se por completo. Agora o estado de cada evento é
+// gravado a cada alteração e recarregado no arranque, tal como o stats.json.
+const EVENTS_FILE = path.join(__dirname, 'eventos.json');
+
+function loadEventos() {
+    try {
+        const raw = fs.readFileSync(EVENTS_FILE, 'utf8');
+        const data = JSON.parse(raw);
+        const mapa = new Map();
+        for (const [msgId, evento] of data) {
+            mapa.set(msgId, {
+                ...evento,
+                // 'contabilizados' é um Set em memória mas o JSON só
+                // consegue guardar arrays — reconstrói o Set ao carregar.
+                contabilizados: new Set(evento.contabilizados || [])
+            });
+        }
+        return mapa;
+    } catch (err) {
+        return new Map();
+    }
+}
+
+function saveEventos() {
+    try {
+        const serializavel = Array.from(eventos.entries()).map(([msgId, evento]) => [
+            msgId,
+            { ...evento, contabilizados: Array.from(evento.contabilizados) }
+        ]);
+        fs.writeFileSync(EVENTS_FILE, JSON.stringify(serializavel, null, 2));
+    } catch (err) {
+        console.error('Erro ao gravar eventos.json:', err);
+    }
+}
+
+eventos = loadEventos();
 
 function registarEventoCriado(criadorId, criadorNome, tipo) {
     const agora = new Date();
@@ -158,7 +225,7 @@ const command = new SlashCommandBuilder()
                 { name: 'Depths', value: 'Depths' },
                 { name: 'Gank', value: 'Gank' },
                 { name: 'Caçadas', value: 'Caçadas' },
-                { name: 'Transporte de Facção', value: 'Transporte de Faccão' },
+                { name: 'Transporte', value: 'Transporte' },
                 { name: 'Dg Avaloniana', value: 'Dg Avaloniana' },
                 { name: 'Facção', value: 'Facção' },
                 { name: 'HCE', value: 'HCE' },
@@ -266,6 +333,18 @@ const lootCommand = new SlashCommandBuilder()
             .setMinValue(0)
             .setMaxValue(100));
 
+// Novo comando: /conta — calculadora genérica para contas rápidas que não
+// são só "dividir por participantes" (ex: preço de um item menos o valor
+// já recebido em loot, somar vários valores, aplicar uma taxa, etc.).
+// Aceita uma expressão matemática simples: + - * / ( ) e casas decimais.
+const contaCommand = new SlashCommandBuilder()
+    .setName('conta')
+    .setDescription('Fazer uma conta rápida (ex: 2500000 - 1800000 * 0.9)')
+    .addStringOption(option =>
+        option.setName('expressao')
+            .setDescription('Expressão a calcular. Ex: 2500000 - 1800000, ou (500000+300000)/4')
+            .setRequired(true));
+
 // IDs dos cargos que podem usar /aviso (ex: @moderador, @admin).
 // Define no .env: AVISO_ALLOWED_ROLE_IDS=123456789012345678,987654321098765432
 const AVISO_ALLOWED_ROLE_IDS = (process.env.AVISO_ALLOWED_ROLE_IDS || '')
@@ -284,7 +363,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
     try {
         await rest.put(
             Routes.applicationCommands(process.env.CLIENT_ID),
-            { body: [command.toJSON(), rankingCommand.toJSON(), avisoCommand.toJSON(), lootCommand.toJSON()] }
+            { body: [command.toJSON(), rankingCommand.toJSON(), avisoCommand.toJSON(), lootCommand.toJSON(), contaCommand.toJSON()] }
         );
 
         console.log('Slash commands registados.');
@@ -377,7 +456,7 @@ function classesObrigatoriasCompletas(evento) {
 
 function criarEmbed(evento) {
     const secoes = evento.roles
-        .map(role => `${role.emoji} ${role.label} (${role.members.length}/${role.max})\n${role.members.join('\n') || 'Nenhum'}`)
+        .map(role => `${role.emoji} ${role.label} (${role.members.length}/${role.max})\n${role.members.map(m => m.nome).join('\n') || 'Nenhum'}`)
         .join('\n\n');
 
     const rodape = evento.globalCap
@@ -454,6 +533,52 @@ ${descricaoTaxa}👥 Participantes: ${participantes}
         .setColor('Gold');
 }
 
+// Avalia uma expressão matemática simples de forma segura: só permite
+// dígitos, . , espaços, parênteses e os operadores + - * /. Qualquer outro
+// carácter (letras, ; , etc.) é rejeitado antes de sequer se tentar calcular,
+// para impedir que se corra código arbitrário através do comando.
+function avaliarExpressao(expressao) {
+    const limpa = expressao.trim();
+
+    if (!/^[0-9+\-*/().\s]+$/.test(limpa)) {
+        throw new Error('Expressão inválida. Usa só números e + - * / ( ).');
+    }
+
+    // Bloqueia sequências de operadores esquisitas tipo "**" ou "//" que
+    // o regex acima deixaria passar mas não fazem sentido aqui.
+    if (/[*/+\-]{2,}/.test(limpa.replace(/\s+/g, ''))) {
+        throw new Error('Expressão inválida.');
+    }
+
+    let resultado;
+    try {
+        // Function(...) em vez de eval direto, mas só chega aqui depois de
+        // validado acima que só há números/operadores — nada de código.
+        resultado = Function(`"use strict"; return (${limpa});`)();
+    } catch (err) {
+        throw new Error('Não consegui calcular essa expressão.');
+    }
+
+    if (typeof resultado !== 'number' || !Number.isFinite(resultado)) {
+        throw new Error('Essa expressão não dá um resultado válido.');
+    }
+
+    return resultado;
+}
+
+// Constrói o embed com o resultado do /conta.
+function criarEmbedConta({ expressao, resultado, autorNome }) {
+    return new EmbedBuilder()
+        .setTitle('🧮 Conta')
+        .setDescription(
+`📝 Expressão: \`${expressao}\`
+
+✅ Resultado: **${formatarPrata(resultado)}**`
+        )
+        .setFooter({ text: `Calculado por ${autorNome}` })
+        .setColor('Gold');
+}
+
 // Constrói o embed de ranking (criadores + participantes) para um período.
 function criarEmbedRanking(periodo) {
     const semanaAtual = getSemanaISO(new Date());
@@ -468,21 +593,34 @@ function criarEmbedRanking(periodo) {
         tituloPeriodo = `Semana atual (${semanaAtual})`;
     }
 
+    // Agrupa por ID (não por nome) para que uma mudança de nickname não
+    // fragmente as contagens de uma mesma pessoa em duas entradas, nem
+    // duas pessoas com o mesmo nickname fiquem juntas na mesma entrada.
     const contagemCriadores = {};
     eventosFiltrados.forEach(e => {
-        contagemCriadores[e.criadorNome] = (contagemCriadores[e.criadorNome] || 0) + 1;
+        if (!contagemCriadores[e.criadorId]) {
+            contagemCriadores[e.criadorId] = { nome: e.criadorNome, count: 0 };
+        }
+        contagemCriadores[e.criadorId].nome = e.criadorNome; // usa o nome mais recente
+        contagemCriadores[e.criadorId].count++;
     });
-    const rankingCriadores = Object.entries(contagemCriadores)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
+    const rankingCriadores = Object.values(contagemCriadores)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(({ nome, count }) => [nome, count]);
 
     const contagemParticipantes = {};
     participacoesFiltradas.forEach(p => {
-        contagemParticipantes[p.nome] = (contagemParticipantes[p.nome] || 0) + 1;
+        if (!contagemParticipantes[p.userId]) {
+            contagemParticipantes[p.userId] = { nome: p.nome, count: 0 };
+        }
+        contagemParticipantes[p.userId].nome = p.nome; // usa o nome mais recente
+        contagemParticipantes[p.userId].count++;
     });
-    const rankingParticipantes = Object.entries(contagemParticipantes)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
+    const rankingParticipantes = Object.values(contagemParticipantes)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map(({ nome, count }) => [nome, count]);
 
     const medalhas = ['🥇', '🥈', '🥉'];
     const formatarLista = (lista, unidade) => {
@@ -530,6 +668,24 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.reply({
                 embeds: [criarEmbedLoot({ valor, participantes, taxa, autorNome })]
             });
+            return;
+        }
+
+        if (interaction.commandName === 'conta') {
+            const expressao = interaction.options.getString('expressao');
+            const autorNome = interaction.member.displayName || interaction.user.username;
+
+            try {
+                const resultado = avaliarExpressao(expressao);
+                await interaction.reply({
+                    embeds: [criarEmbedConta({ expressao, resultado, autorNome })]
+                });
+            } catch (err) {
+                await interaction.reply({
+                    content: `❌ ${err.message}`,
+                    ephemeral: true
+                });
+            }
             return;
         }
 
@@ -649,6 +805,7 @@ client.on(Events.InteractionCreate, async interaction => {
         });
 
         eventos.set(msg.id, evento);
+        saveEventos();
 
         // Regista para efeitos de ranking semanal de criadores.
         registarEventoCriado(interaction.user.id, criadorNome, tipo);
@@ -661,7 +818,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!evento) return;
 
         const nome = interaction.member.displayName || interaction.user.username;
-        const jaInscritoEm = evento.roles.find(role => role.members.includes(nome));
+        const jaInscritoEm = evento.roles.find(role => role.members.some(m => m.id === interaction.user.id));
 
         if (interaction.customId !== 'sair') {
             const role = evento.roles.find(r => r.id === interaction.customId);
@@ -680,9 +837,9 @@ client.on(Events.InteractionCreate, async interaction => {
                     const eraNovoParticipante = !evento.contabilizados.has(interaction.user.id);
 
                     if (jaInscritoEm) {
-                        jaInscritoEm.members = jaInscritoEm.members.filter(x => x !== nome);
+                        jaInscritoEm.members = jaInscritoEm.members.filter(m => m.id !== interaction.user.id);
                     }
-                    role.members.push(nome);
+                    role.members.push({ id: interaction.user.id, nome });
 
                     if (eraNovoParticipante) {
                         evento.contabilizados.add(interaction.user.id);
@@ -701,8 +858,10 @@ client.on(Events.InteractionCreate, async interaction => {
                 }
             }
         } else if (jaInscritoEm) {
-            jaInscritoEm.members = jaInscritoEm.members.filter(x => x !== nome);
+            jaInscritoEm.members = jaInscritoEm.members.filter(m => m.id !== interaction.user.id);
         }
+
+        saveEventos();
 
         await interaction.update({
             embeds: [criarEmbed(evento)]
